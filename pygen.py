@@ -1,0 +1,393 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageTk
+import torch
+import os
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
+
+import threading
+# NOTE: Do not commit model files to git. Add 'models/' to your .gitignore.
+
+MODELS_DIR = "./models"
+
+class SDApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Text to Image Generator")
+        self.root.geometry("700x600")
+        self.root.resizable(False, False)
+        style = ttk.Style()
+        style.theme_use("clam")
+
+        main_frame = ttk.Frame(root, padding=10)
+        main_frame.pack(fill="both", expand=True)
+
+        # Model and image size section
+        top_frame = ttk.LabelFrame(main_frame, text="Model & Image Settings", padding=10)
+        top_frame.pack(fill="x", pady=10)
+
+        ttk.Label(top_frame, text="Select Model:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.model_var = tk.StringVar(root)
+        self.model_var.set("")
+        self.model_menu = ttk.OptionMenu(top_frame, self.model_var, "")
+        self.model_menu.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+
+        ttk.Label(top_frame, text="Image Size:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        self.size_var = tk.StringVar(root)
+        self.size_options = ["512x512", "768x768", "1024x1024", "1920x1080"]
+        self.size_var.set(self.size_options[0])
+        self.size_menu = ttk.OptionMenu(top_frame, self.size_var, self.size_options[0], *self.size_options)
+        self.size_menu.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
+
+        # Options section
+        options_frame = ttk.LabelFrame(main_frame, text="Generation Options", padding=10)
+        options_frame.pack(fill="x", pady=10)
+
+        ttk.Label(options_frame, text="Prompt Adherence / Creativity:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.guidance_var = tk.DoubleVar(root)
+        self.guidance_var.set(7.0)
+        guidance_frame = ttk.Frame(options_frame)
+        guidance_frame.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+        self.guidance_scale = ttk.Scale(guidance_frame, from_=1.0, to=20.0, orient="horizontal", variable=self.guidance_var)
+        self.guidance_scale.pack(side="left", fill="x", expand=True)
+        self.guidance_value_label = ttk.Label(guidance_frame, text=f"{self.guidance_var.get():.2f}")
+        self.guidance_value_label.pack(side="left", padx=5)
+        def update_guidance_label(*args):
+            self.guidance_value_label.config(text=f"{self.guidance_var.get():.2f}")
+        self.guidance_var.trace_add("write", update_guidance_label)
+        ttk.Label(options_frame, text="Lower = more creative, Higher = more literal (default: 7.0)", font=("Arial", 8)).grid(row=0, column=2, sticky="w", padx=5)
+
+        ttk.Label(options_frame, text="Quality / Detail (Steps):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        self.steps_var = tk.IntVar(root)
+        self.steps_var.set(30)
+        steps_frame = ttk.Frame(options_frame)
+        steps_frame.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
+        self.steps_scale = ttk.Scale(steps_frame, from_=10, to=100, orient="horizontal", variable=self.steps_var)
+        self.steps_scale.pack(side="left", fill="x", expand=True)
+        self.steps_value_label = ttk.Label(steps_frame, text=f"{self.steps_var.get()}")
+        self.steps_value_label.pack(side="left", padx=5)
+        def update_steps_label(*args):
+            self.steps_value_label.config(text=f"{self.steps_var.get()}")
+        self.steps_var.trace_add("write", update_steps_label)
+        ttk.Label(options_frame, text="Higher = more detail, slower (default: 30)", font=("Arial", 8)).grid(row=1, column=2, sticky="w", padx=5)
+
+        ttk.Label(options_frame, text="Random Seed:").grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        seed_frame = ttk.Frame(options_frame)
+        seed_frame.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
+        self.seed_entry = ttk.Entry(seed_frame)
+        self.seed_entry.pack(side="left", fill="x", expand=True)
+        clear_seed_btn = ttk.Button(seed_frame, text="✕", width=2, command=lambda: self.seed_entry.delete(0, tk.END))
+        clear_seed_btn.pack(side="left", padx=2)
+        ttk.Label(options_frame, text="Set for reproducible results, blank for random", font=("Arial", 8)).grid(row=2, column=2, sticky="w", padx=5)
+
+        options_frame.columnconfigure(1, weight=1)
+
+        # Prompts frame
+        prompts_frame = ttk.Frame(main_frame)
+        prompts_frame.pack(fill="both", pady=10)
+
+        # Prompt frame
+        prompt_frame = ttk.LabelFrame(prompts_frame, text="Image Description (Prompt)", padding=10)
+        prompt_frame.pack(side="left", fill="both", expand=True)
+        self.prompt_entry = tk.Text(prompt_frame, width=30, height=4, wrap="word")
+        self.prompt_entry.pack(side="left", fill="both", expand=True)
+        self.prompt_scroll = ttk.Scrollbar(prompt_frame, command=self.prompt_entry.yview)
+        self.prompt_scroll.pack(side="right", fill="y")
+        self.prompt_entry.config(yscrollcommand=self.prompt_scroll.set)
+
+        # Negative prompt frame
+        negative_frame = ttk.LabelFrame(prompts_frame, text="Negative Prompt (optional)", padding=10)
+        negative_frame.pack(side="right", fill="both", expand=True)
+        self.negative_entry = tk.Text(negative_frame, width=30, height=2, wrap="word")
+        self.negative_entry.pack(side="left", fill="both", expand=True)
+        self.negative_scroll = ttk.Scrollbar(negative_frame, command=self.negative_entry.yview)
+        self.negative_scroll.pack(side="right", fill="y")
+        self.negative_entry.config(yscrollcommand=self.negative_scroll.set)
+
+        # Add right-click context menu for copy/paste/cut
+        self.text_menu = tk.Menu(root, tearoff=0)
+        self.text_menu.add_command(label="Cut", command=lambda: self._text_event("cut"))
+        self.text_menu.add_command(label="Copy", command=lambda: self._text_event("copy"))
+        self.text_menu.add_command(label="Paste", command=lambda: self._text_event("paste"))
+        self.prompt_entry.bind("<Button-3>", lambda e: self._show_text_menu(e, self.prompt_entry))
+        self.negative_entry.bind("<Button-3>", lambda e: self._show_text_menu(e, self.negative_entry))
+
+        # Generate button and status
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill="x", pady=10)
+        self.generate_button = ttk.Button(bottom_frame, text="Generate Image", command=self.generate_image)
+        self.generate_button.pack(side="left", padx=10)
+        self.status_label = ttk.Label(bottom_frame, text="Ready to generate an image", anchor="w", justify="left")
+        self.status_label.pack(side="left", padx=10, fill="x", expand=True)
+
+        # Log box
+        log_frame = ttk.LabelFrame(main_frame, text="Log", padding=10)
+        log_frame.pack(fill="both", pady=10, expand=True)
+        self.log_text = tk.Text(log_frame, height=5, wrap="word", state="disabled")
+        self.log_text.pack(side="left", fill="both", expand=True)
+        self.log_scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        self.log_scroll.pack(side="right", fill="y")
+        self.log_text.config(yscrollcommand=self.log_scroll.set)
+
+        self.pipe = None
+        self.current_model = None
+        self.is_generating = False
+
+        # Log app startup
+        self.log("App started. Ready to generate an image.")
+
+        # Scan models folder for available models
+        self.available_models = self._find_local_models()
+        if not self.available_models:
+            messagebox.showerror("No Models Found", f"No models found in '{MODELS_DIR}'. Please add a model folder.")
+            self.model_var.set("")
+            self.model_menu['menu'].delete(0, 'end')
+            self.generate_button.config(state="disabled")
+        else:
+            self.model_var.set(list(self.available_models.keys())[0])
+            self.model_menu['menu'].delete(0, 'end')
+            for name in self.available_models.keys():
+                self.model_menu['menu'].add_command(label=name, command=tk._setit(self.model_var, name))
+            self.generate_button.config(state="normal")
+
+        # Bind model selection change to log
+        def on_model_change(*args):
+            model = self.model_var.get()
+            if model:
+                self.log(f"Model selected: {model}")
+            else:
+                self.log("No model selected.")
+        self.model_var.trace_add("write", on_model_change)
+
+        # Bind image size change to log
+        def on_size_change(*args):
+            size = self.size_var.get()
+            self.log(f"Image size selected: {size}")
+        self.size_var.trace_add("write", on_size_change)
+
+    def log(self, message):
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", message + "\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+        self.status_label.config(text=message)
+
+    def _show_text_menu(self, event, widget):
+        widget.focus_set()
+        self.text_menu.tk_popup(event.x_root, event.y_root)
+
+    def _text_event(self, action):
+        widget = self.root.focus_get()
+        try:
+            if action == "cut":
+                widget.event_generate("<<Cut>>")
+            elif action == "copy":
+                widget.event_generate("<<Copy>>")
+            elif action == "paste":
+                widget.event_generate("<<Paste>>")
+        except Exception:
+            pass
+
+    def _find_local_models(self):
+        models = {}
+        if not os.path.exists(MODELS_DIR):
+            return models
+        for entry in os.listdir(MODELS_DIR):
+            entry_path = os.path.join(MODELS_DIR, entry)
+            if os.path.isdir(entry_path):
+                required = [
+                    "model_index.json",
+                    "unet",
+                    "vae",
+                    "text_encoder",
+                    "tokenizer"
+                ]
+                missing = [item for item in required if not os.path.exists(os.path.join(entry_path, item))]
+                if not missing:
+                    models[entry] = entry_path
+        return models
+
+    def load_model(self):
+        model_name = self.model_var.get()
+        model_dir = self.available_models.get(model_name, None)
+        if not model_name or not model_dir:
+            self.log("No model selected or model not found.")
+            return None
+        if self.current_model == model_name and self.pipe is not None:
+            return self.pipe
+        self.log(f"Loading model: {model_name}")
+        self.root.update()
+        try:
+            use_cuda = torch.cuda.is_available()
+            if not use_cuda:
+                self.log("CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL.")
+                messagebox.showwarning("CUDA Not Available", "CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL.")
+            torch_dtype = torch.float16 if use_cuda else torch.float32
+            if "xl" in model_name.lower():
+                pipe = StableDiffusionXLPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype)
+            else:
+                pipe = StableDiffusionPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype)
+            device = "cuda" if use_cuda else "cpu"
+            pipe = pipe.to(device)
+            self.pipe = pipe
+            self.current_model = model_name
+            self.log(f"Loaded model: {model_name} (Device: {device})")
+            return pipe
+        except Exception as e:
+            self.log(f"Failed to load model: {e}")
+            messagebox.showerror("Error", f"Failed to load model: {e}")
+            self.status_label.config(text="Model loading failed")
+            return None
+
+    def generate_image(self):
+        if self.is_generating:
+            self.log("Image generation in progress! Please wait.")
+            messagebox.showwarning("Warning", "Image generation in progress! Please wait.")
+            return
+        prompt = self.prompt_entry.get("1.0", "end").strip()
+        negative_prompt = self.negative_entry.get("1.0", "end").strip()
+        model_name = self.model_var.get()
+        if not model_name or model_name not in self.available_models:
+            self.log("Please select a model before generating an image.")
+            messagebox.showwarning("Model Error", "Please select a model before generating an image.")
+            return
+        if not prompt:
+            self.log("Please enter a description!")
+            messagebox.showwarning("Input Error", "Please enter a description!")
+            return
+        self.pipe = self.load_model()
+        if self.pipe is None:
+            return
+        self.generate_button.config(state="disabled")
+        def run():
+            self.is_generating = True
+            self.log("Generating image...")
+            self.root.update()
+            try:
+                # Parse image size
+                size_str = self.size_var.get()
+                if "x" in size_str:
+                    width, height = map(int, size_str.split("x"))
+                else:
+                    width, height = 512, 512
+                # Get guidance scale, steps, seed
+                guidance_scale = self.guidance_var.get()
+                num_inference_steps = self.steps_var.get()
+                seed_str = self.seed_entry.get().strip()
+                generator = None
+                used_seed = None
+                if seed_str:
+                    try:
+                        seed = int(seed_str)
+                        generator = torch.manual_seed(seed)
+                        used_seed = seed
+                    except ValueError:
+                        self.root.after(0, lambda: messagebox.showwarning("Seed Error", "Seed must be an integer or blank."))
+                        generator = None
+                else:
+                    # Generate a random seed and display it
+                    import random
+                    used_seed = random.randint(0, 2**32 - 1)
+                    generator = torch.manual_seed(used_seed)
+                use_cuda = torch.cuda.is_available()
+                with torch.autocast("cuda" if use_cuda else "cpu"):
+                    try:
+                        if "xl" in model_name.lower():
+                            result = self.pipe(
+                                prompt,
+                                negative_prompt=negative_prompt if negative_prompt else None,
+                                num_inference_steps=num_inference_steps,
+                                guidance_scale=guidance_scale,
+                                height=height,
+                                width=width,
+                                generator=generator
+                            )
+                        else:
+                            result = self.pipe(
+                                prompt,
+                                negative_prompt=negative_prompt if negative_prompt else None,
+                                num_inference_steps=num_inference_steps,
+                                guidance_scale=guidance_scale,
+                                height=height,
+                                width=width,
+                                generator=generator
+                            )
+                    except TypeError as te:
+                        self.root.after(0, lambda: messagebox.showwarning(
+                            "Model Error",
+                            "Your diffusers version or model does not support progress callbacks. Progress bar has been removed."
+                        ))
+                        if "xl" in model_name.lower():
+                            result = self.pipe(
+                                prompt,
+                                negative_prompt=negative_prompt if negative_prompt else None,
+                                num_inference_steps=num_inference_steps,
+                                guidance_scale=guidance_scale,
+                                height=height,
+                                width=width,
+                                generator=generator
+                            )
+                        else:
+                            result = self.pipe(
+                                prompt,
+                                negative_prompt=negative_prompt if negative_prompt else None,
+                                num_inference_steps=num_inference_steps,
+                                guidance_scale=guidance_scale,
+                                height=height,
+                                width=width,
+                                generator=generator
+                            )
+                    image = result.images[0]
+                # Check for black image (all pixels zero)
+                if hasattr(image, 'getextrema'):
+                    extrema = image.getextrema()
+                    if isinstance(extrema, tuple) and all(e == (0, 0) for e in extrema):
+                        self.log("Generated image is completely black. This usually means a model or device issue. Try restarting, updating diffusers, or verifying your model files.")
+                        self.root.after(0, lambda: messagebox.showwarning(
+                            "Black Image Warning",
+                            "Generated image is completely black. This usually means a model or device issue. Try restarting, updating diffusers, or verifying your model files."
+                        ))
+                # Show image only in popup window
+                def show_image_window():
+                    win = tk.Toplevel(self.root)
+                    win.title("Generated Image")
+                    img_disp = image.copy()
+                    img_disp.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                    img_tk2 = ImageTk.PhotoImage(img_disp)
+                    lbl = tk.Label(win, image=img_tk2)
+                    lbl.image = img_tk2
+                    lbl.pack()
+                    # Add right-click menu for saving
+                    def save_image():
+                        filename = filedialog.asksaveasfilename(
+                            defaultextension=".png",
+                            filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
+                            title="Save Generated Image"
+                        )
+                        if filename:
+                            image.save(filename)
+                            self.log(f"Image saved as {os.path.basename(filename)}")
+                        else:
+                            self.log("Image save cancelled")
+                    img_menu = tk.Menu(win, tearoff=0)
+                    img_menu.add_command(label="Save Image", command=save_image)
+                    def show_img_menu(event):
+                        img_menu.tk_popup(event.x_root, event.y_root)
+                    lbl.bind("<Button-3>", show_img_menu)
+                self.root.after(0, show_image_window)
+                # Display used seed in seed textbox
+                self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
+                self.root.after(0, lambda: self.seed_entry.insert(0, str(used_seed)))
+                self.log("Image generated. Right-click the image to save.")
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to generate image: {e}"))
+                self.root.after(0, lambda: self.log(f"Image generation failed: {e}"))
+            finally:
+                self.is_generating = False
+                self.root.after(0, lambda: self.generate_button.config(state="normal"))
+        threading.Thread(target=run, daemon=True).start()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SDApp(root)
+    root.mainloop()
