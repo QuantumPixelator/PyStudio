@@ -4,8 +4,8 @@ from PIL import Image, ImageTk
 import torch
 import os
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
-
 import threading
+
 # NOTE: Do not commit model files to git. Add 'models/' to your .gitignore.
 
 MODELS_DIR = "./models"
@@ -13,8 +13,8 @@ MODELS_DIR = "./models"
 class SDApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Text to Image Generator")
-        self.root.geometry("700x600")
+        self.root.title("PyStudio Diffusion")
+        self.root.geometry("700x650")
         self.root.resizable(False, False)
         style = ttk.Style()
         style.theme_use("clam")
@@ -123,7 +123,7 @@ class SDApp:
         # Log box
         log_frame = ttk.LabelFrame(main_frame, text="Log", padding=10)
         log_frame.pack(fill="both", pady=10, expand=True)
-        self.log_text = tk.Text(log_frame, height=5, wrap="word", state="disabled")
+        self.log_text = tk.Text(log_frame, height=25, wrap="word", state="disabled")
         self.log_text.pack(side="left", fill="both", expand=True)
         self.log_scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_scroll.pack(side="right", fill="y")
@@ -207,37 +207,45 @@ class SDApp:
                     models[entry] = entry_path
         return models
 
-    def load_model(self):
-        model_name = self.model_var.get()
-        model_dir = self.available_models.get(model_name, None)
-        if not model_name or not model_dir:
-            self.log("No model selected or model not found.")
-            return None
-        if self.current_model == model_name and self.pipe is not None:
-            return self.pipe
-        self.log(f"Loading model: {model_name}")
-        self.root.update()
-        try:
-            use_cuda = torch.cuda.is_available()
-            if not use_cuda:
-                self.log("CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL.")
-                messagebox.showwarning("CUDA Not Available", "CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL.")
-            torch_dtype = torch.float16 if use_cuda else torch.float32
-            if "xl" in model_name.lower():
-                pipe = StableDiffusionXLPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype)
-            else:
-                pipe = StableDiffusionPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype)
-            device = "cuda" if use_cuda else "cpu"
-            pipe = pipe.to(device)
-            self.pipe = pipe
-            self.current_model = model_name
-            self.log(f"Loaded model: {model_name} (Device: {device})")
-            return pipe
-        except Exception as e:
-            self.log(f"Failed to load model: {e}")
-            messagebox.showerror("Error", f"Failed to load model: {e}")
-            self.status_label.config(text="Model loading failed")
-            return None
+    def load_model_threaded(self, callback=None):
+        def load():
+            model_name = self.model_var.get()
+            model_dir = self.available_models.get(model_name, None)
+            if not model_name or not model_dir:
+                self.root.after(0, lambda: self.log("No model selected or model not found."))
+                if callback:
+                    self.root.after(0, lambda: callback(None))
+                return
+            if self.current_model == model_name and self.pipe is not None:
+                if callback:
+                    self.root.after(0, lambda: callback(self.pipe))
+                return
+            self.root.after(0, lambda: self.log(f"Loading model: {model_name}"))
+            self.root.after(0, self.root.update)
+            try:
+                use_cuda = torch.cuda.is_available()
+                if not use_cuda:
+                    self.root.after(0, lambda: self.log("CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL."))
+                    self.root.after(0, lambda: messagebox.showwarning("CUDA Not Available", "CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL."))
+                torch_dtype = torch.float16 if use_cuda else torch.float32
+                if "xl" in model_name.lower():
+                    pipe = StableDiffusionXLPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype)
+                else:
+                    pipe = StableDiffusionPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype)
+                device = "cuda" if use_cuda else "cpu"
+                pipe = pipe.to(device)
+                self.pipe = pipe
+                self.current_model = model_name
+                self.root.after(0, lambda: self.log(f"Loaded model: {model_name} (Device: {device})"))
+                if callback:
+                    self.root.after(0, lambda: callback(pipe))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Failed to load model: {e}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to load model: {e}"))
+                self.root.after(0, lambda: self.status_label.config(text="Model loading failed"))
+                if callback:
+                    self.root.after(0, lambda: callback(None))
+        threading.Thread(target=load, daemon=True).start()
 
     def generate_image(self):
         if self.is_generating:
@@ -255,137 +263,136 @@ class SDApp:
             self.log("Please enter a description!")
             messagebox.showwarning("Input Error", "Please enter a description!")
             return
-        self.pipe = self.load_model()
-        if self.pipe is None:
-            return
         self.generate_button.config(state="disabled")
-        def run():
-            self.is_generating = True
-            self.log("Generating image...")
-            self.root.update()
-            try:
-                # Parse image size
-                size_str = self.size_var.get()
-                if "x" in size_str:
-                    width, height = map(int, size_str.split("x"))
-                else:
-                    width, height = 512, 512
-                # Get guidance scale, steps, seed
-                guidance_scale = self.guidance_var.get()
-                num_inference_steps = self.steps_var.get()
-                seed_str = self.seed_entry.get().strip()
-                generator = None
-                used_seed = None
-                if seed_str:
-                    try:
-                        seed = int(seed_str)
-                        generator = torch.manual_seed(seed)
-                        used_seed = seed
-                    except ValueError:
-                        self.root.after(0, lambda: messagebox.showwarning("Seed Error", "Seed must be an integer or blank."))
-                        generator = None
-                else:
-                    # Generate a random seed and display it
-                    import random
-                    used_seed = random.randint(0, 2**32 - 1)
-                    generator = torch.manual_seed(used_seed)
-                use_cuda = torch.cuda.is_available()
-                with torch.autocast("cuda" if use_cuda else "cpu"):
-                    try:
-                        if "xl" in model_name.lower():
-                            result = self.pipe(
-                                prompt,
-                                negative_prompt=negative_prompt if negative_prompt else None,
-                                num_inference_steps=num_inference_steps,
-                                guidance_scale=guidance_scale,
-                                height=height,
-                                width=width,
-                                generator=generator
-                            )
-                        else:
-                            result = self.pipe(
-                                prompt,
-                                negative_prompt=negative_prompt if negative_prompt else None,
-                                num_inference_steps=num_inference_steps,
-                                guidance_scale=guidance_scale,
-                                height=height,
-                                width=width,
-                                generator=generator
-                            )
-                    except TypeError as te:
-                        self.root.after(0, lambda: messagebox.showwarning(
-                            "Model Error",
-                            "Your diffusers version or model does not support progress callbacks. Progress bar has been removed."
-                        ))
-                        if "xl" in model_name.lower():
-                            result = self.pipe(
-                                prompt,
-                                negative_prompt=negative_prompt if negative_prompt else None,
-                                num_inference_steps=num_inference_steps,
-                                guidance_scale=guidance_scale,
-                                height=height,
-                                width=width,
-                                generator=generator
-                            )
-                        else:
-                            result = self.pipe(
-                                prompt,
-                                negative_prompt=negative_prompt if negative_prompt else None,
-                                num_inference_steps=num_inference_steps,
-                                guidance_scale=guidance_scale,
-                                height=height,
-                                width=width,
-                                generator=generator
-                            )
-                    image = result.images[0]
-                # Check for black image (all pixels zero)
-                if hasattr(image, 'getextrema'):
-                    extrema = image.getextrema()
-                    if isinstance(extrema, tuple) and all(e == (0, 0) for e in extrema):
-                        self.log("Generated image is completely black. This usually means a model or device issue. Try restarting, updating diffusers, or verifying your model files.")
-                        self.root.after(0, lambda: messagebox.showwarning(
-                            "Black Image Warning",
-                            "Generated image is completely black. This usually means a model or device issue. Try restarting, updating diffusers, or verifying your model files."
-                        ))
-                # Show image only in popup window
-                def show_image_window():
-                    win = tk.Toplevel(self.root)
-                    win.title("Generated Image")
-                    img_disp = image.copy()
-                    img_disp.thumbnail((800, 800), Image.Resampling.LANCZOS)
-                    img_tk2 = ImageTk.PhotoImage(img_disp)
-                    lbl = tk.Label(win, image=img_tk2)
-                    lbl.image = img_tk2
-                    lbl.pack()
-                    # Add right-click menu for saving
-                    def save_image():
-                        filename = filedialog.asksaveasfilename(
-                            defaultextension=".png",
-                            filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
-                            title="Save Generated Image"
-                        )
-                        if filename:
-                            image.save(filename)
-                            self.log(f"Image saved as {os.path.basename(filename)}")
-                        else:
-                            self.log("Image save cancelled")
-                    img_menu = tk.Menu(win, tearoff=0)
-                    img_menu.add_command(label="Save Image", command=save_image)
-                    def show_img_menu(event):
-                        img_menu.tk_popup(event.x_root, event.y_root)
-                    lbl.bind("<Button-3>", show_img_menu)
-                self.root.after(0, show_image_window)
-                # Display used seed in seed textbox
-                self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
-                self.root.after(0, lambda: self.seed_entry.insert(0, str(used_seed)))
-                self.log("Image generated. Right-click the image to save.")
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to generate image: {e}"))
-                self.root.after(0, lambda: self.log(f"Image generation failed: {e}"))
-            finally:
+        self.is_generating = True
+        self.log("Loading model...")
+        def after_model_loaded(pipe):
+            if pipe is None:
                 self.is_generating = False
                 self.root.after(0, lambda: self.generate_button.config(state="normal"))
-        threading.Thread(target=run, daemon=True).start()
+                return
+            self.log("Generating image...")
+            def run_generation():
+                try:
+                    size_str = self.size_var.get()
+                    if "x" in size_str:
+                        width, height = map(int, size_str.split("x"))
+                    else:
+                        width, height = 512, 512
+                    guidance_scale = self.guidance_var.get()
+                    num_inference_steps = self.steps_var.get()
+                    seed_str = self.seed_entry.get().strip()
+                    generator = None
+                    used_seed = None
+                    if seed_str:
+                        try:
+                            seed = int(seed_str)
+                            generator = torch.manual_seed(seed)
+                            used_seed = seed
+                        except ValueError:
+                            self.root.after(0, lambda: messagebox.showwarning("Seed Error", "Seed must be an integer or blank."))
+                            generator = None
+                    else:
+                        import random
+                        used_seed = random.randint(0, 2**32 - 1)
+                        generator = torch.manual_seed(used_seed)
+                    use_cuda = torch.cuda.is_available()
+                    with torch.autocast("cuda" if use_cuda else "cpu"):
+                        try:
+                            if "xl" in model_name.lower():
+                                result = pipe(
+                                    prompt,
+                                    negative_prompt=negative_prompt if negative_prompt else None,
+                                    num_inference_steps=num_inference_steps,
+                                    guidance_scale=guidance_scale,
+                                    height=height,
+                                    width=width,
+                                    generator=generator
+                                )
+                            else:
+                                result = pipe(
+                                    prompt,
+                                    negative_prompt=negative_prompt if negative_prompt else None,
+                                    num_inference_steps=num_inference_steps,
+                                    guidance_scale=guidance_scale,
+                                    height=height,
+                                    width=width,
+                                    generator=generator
+                                )
+                        except TypeError as te:
+                            self.root.after(0, lambda: messagebox.showwarning(
+                                "Model Error",
+                                "Your diffusers version or model does not support progress callbacks. Progress bar has been removed."
+                            ))
+                            if "xl" in model_name.lower():
+                                result = pipe(
+                                    prompt,
+                                    negative_prompt=negative_prompt if negative_prompt else None,
+                                    num_inference_steps=num_inference_steps,
+                                    guidance_scale=guidance_scale,
+                                    height=height,
+                                    width=width,
+                                    generator=generator
+                                )
+                            else:
+                                result = pipe(
+                                    prompt,
+                                    negative_prompt=negative_prompt if negative_prompt else None,
+                                    num_inference_steps=num_inference_steps,
+                                    guidance_scale=guidance_scale,
+                                    height=height,
+                                    width=width,
+                                    generator=generator
+                                )
+                        image = result.images[0]
+                    # Check for black image (all pixels zero)
+                    if hasattr(image, 'getextrema'):
+                        extrema = image.getextrema()
+                        if isinstance(extrema, tuple) and all(e == (0, 0) for e in extrema):
+                            self.root.after(0, lambda: self.log("Generated image is completely black. This usually means a model or device issue. Try restarting, updating diffusers, or verifying your model files."))
+                            self.root.after(0, lambda: messagebox.showwarning(
+                                "Black Image Warning",
+                                "Generated image is completely black. This usually means a model or device issue. Try restarting, updating diffusers, or verifying your model files."
+                            ))
+                    def show_image_window_threaded():
+                        def show_image_window():
+                            win = tk.Toplevel(self.root)
+                            win.title("Generated Image")
+                            img_disp = image.copy()
+                            img_disp.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                            img_tk2 = ImageTk.PhotoImage(img_disp)
+                            lbl = tk.Label(win, image=img_tk2)
+                            lbl.image = img_tk2
+                            lbl.pack()
+                            def save_image():
+                                filename = filedialog.asksaveasfilename(
+                                    defaultextension=".png",
+                                    filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
+                                    title="Save Generated Image"
+                                )
+                                if filename:
+                                    image.save(filename)
+                                    self.log(f"Image saved as {os.path.basename(filename)}")
+                                else:
+                                    self.log("Image save cancelled")
+                            img_menu = tk.Menu(win, tearoff=0)
+                            img_menu.add_command(label="Save Image", command=save_image)
+                            def show_img_menu(event):
+                                img_menu.tk_popup(event.x_root, event.y_root)
+                            lbl.bind("<Button-3>", show_img_menu)
+                        self.root.after(0, show_image_window)
+                    threading.Thread(target=show_image_window_threaded, daemon=True).start()
+                    self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
+                    self.root.after(0, lambda: self.seed_entry.insert(0, str(used_seed)))
+                    self.root.after(0, lambda: self.log("Image generated. Right-click the image to save."))
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to generate image: {e}"))
+                    self.root.after(0, lambda: self.log(f"Image generation failed: {e}"))
+                finally:
+                    self.is_generating = False
+                    self.root.after(0, lambda: self.generate_button.config(state="normal"))
+            threading.Thread(target=run_generation, daemon=True).start()
+        self.load_model_threaded(callback=after_model_loaded)
 
 if __name__ == "__main__":
     root = tk.Tk()
