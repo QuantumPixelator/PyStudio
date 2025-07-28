@@ -115,8 +115,27 @@ class SDApp:
         # Generate button and status
         bottom_frame = ttk.Frame(main_frame)
         bottom_frame.pack(fill="x", pady=10)
+
+        # Generate/Cancel button
         self.generate_button = ttk.Button(bottom_frame, text="Generate Image", command=self.generate_image)
         self.generate_button.pack(side="left", padx=10)
+        self.cancel_button = ttk.Button(bottom_frame, text="Cancel", command=self.cancel_generation, state="disabled")
+        self.cancel_button.pack(side="left", padx=5)
+
+        # Auto Clear Seed checkbox
+        self.auto_clear_seed_var = tk.BooleanVar(value=False)
+        self.auto_clear_seed_check = ttk.Checkbutton(bottom_frame, text="Auto Clear Seed", variable=self.auto_clear_seed_var)
+        self.auto_clear_seed_check.pack(side="left", padx=10)
+
+
+
+        # Progress bar in its own row below the buttons
+        progress_frame = ttk.Frame(main_frame)
+        progress_frame.pack(fill="x", pady=(0, 10))
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100, length=400)
+        self.progress_bar.pack(fill="x", padx=10)
+
         self.status_label = ttk.Label(bottom_frame, text="Ready to generate an image", anchor="w", justify="left")
         self.status_label.pack(side="left", padx=10, fill="x", expand=True)
 
@@ -129,9 +148,12 @@ class SDApp:
         self.log_scroll.pack(side="right", fill="y")
         self.log_text.config(yscrollcommand=self.log_scroll.set)
 
+
+
         self.pipe = None
         self.current_model = None
         self.is_generating = False
+        self._cancel_requested = False
 
         # Log app startup
         self.log("App started. Ready to generate an image.")
@@ -164,6 +186,13 @@ class SDApp:
             size = self.size_var.get()
             self.log(f"Image size selected: {size}")
         self.size_var.trace_add("write", on_size_change)
+
+    def cancel_generation(self):
+        self._cancel_requested = True
+        self.log("Image generation cancelled by user.")
+        self.status_label.config(text="Generation cancelled.")
+        self.generate_button.config(state="normal")
+        self.cancel_button.config(state="disabled")
 
     def log(self, message):
         self.log_text.config(state="normal")
@@ -264,15 +293,24 @@ class SDApp:
             messagebox.showwarning("Input Error", "Please enter a description!")
             return
         self.generate_button.config(state="disabled")
+        self.cancel_button.config(state="normal")
         self.is_generating = True
+        self._cancel_requested = False
         self.log("Loading model...")
+        self.progress_var.set(0)
+        self.progress_bar.update()
         def after_model_loaded(pipe):
             if pipe is None:
                 self.is_generating = False
                 self.root.after(0, lambda: self.generate_button.config(state="normal"))
+                self.root.after(0, lambda: self.cancel_button.config(state="disabled"))
                 return
             self.log("Generating image...")
             def run_generation():
+                def progress_callback(step, timestep, total_steps):
+                    percent = int((step + 1) / total_steps * 100)
+                    self.root.after(0, lambda: self.progress_var.set(percent))
+                    self.root.after(0, self.progress_bar.update)
                 try:
                     size_str = self.size_var.get()
                     if "x" in size_str:
@@ -299,52 +337,48 @@ class SDApp:
                     use_cuda = torch.cuda.is_available()
                     with torch.autocast("cuda" if use_cuda else "cpu"):
                         try:
-                            if "xl" in model_name.lower():
-                                result = pipe(
-                                    prompt,
-                                    negative_prompt=negative_prompt if negative_prompt else None,
-                                    num_inference_steps=num_inference_steps,
-                                    guidance_scale=guidance_scale,
-                                    height=height,
-                                    width=width,
-                                    generator=generator
-                                )
-                            else:
-                                result = pipe(
-                                    prompt,
-                                    negative_prompt=negative_prompt if negative_prompt else None,
-                                    num_inference_steps=num_inference_steps,
-                                    guidance_scale=guidance_scale,
-                                    height=height,
-                                    width=width,
-                                    generator=generator
-                                )
-                        except TypeError as te:
-                            self.root.after(0, lambda: messagebox.showwarning(
-                                "Model Error",
-                                "Your diffusers version or model does not support progress callbacks. Progress bar has been removed."
-                            ))
-                            if "xl" in model_name.lower():
-                                result = pipe(
-                                    prompt,
-                                    negative_prompt=negative_prompt if negative_prompt else None,
-                                    num_inference_steps=num_inference_steps,
-                                    guidance_scale=guidance_scale,
-                                    height=height,
-                                    width=width,
-                                    generator=generator
-                                )
-                            else:
-                                result = pipe(
-                                    prompt,
-                                    negative_prompt=negative_prompt if negative_prompt else None,
-                                    num_inference_steps=num_inference_steps,
-                                    guidance_scale=guidance_scale,
-                                    height=height,
-                                    width=width,
-                                    generator=generator
-                                )
+                            pipe_args = dict(
+                                prompt=prompt,
+                                negative_prompt=negative_prompt if negative_prompt else None,
+                                num_inference_steps=num_inference_steps,
+                                guidance_scale=guidance_scale,
+                                height=height,
+                                width=width,
+                                generator=generator,
+                                callback=progress_callback,
+                                callback_steps=1
+                            )
+                            # Some older diffusers may not support callback/callback_steps
+                            try:
+                                result = pipe(**pipe_args)
+                            except TypeError:
+                                # Remove callback/callback_steps if not supported
+                                pipe_args.pop('callback', None)
+                                pipe_args.pop('callback_steps', None)
+                                result = pipe(**pipe_args)
+                        except Exception as te:
+                            self.root.after(0, lambda: self.log("Progress bar not supported in this diffusers/model version."))
+                            # Fallback: no progress bar
+                            pipe_args = dict(
+                                prompt=prompt,
+                                negative_prompt=negative_prompt if negative_prompt else None,
+                                num_inference_steps=num_inference_steps,
+                                guidance_scale=guidance_scale,
+                                height=height,
+                                width=width,
+                                generator=generator
+                            )
+                            result = pipe(**pipe_args)
                         image = result.images[0]
+                    # Check for cancel
+                    if self._cancel_requested:
+                        self.root.after(0, lambda: self.log("Generation cancelled before completion."))
+                        self.root.after(0, lambda: self.status_label.config(text="Generation cancelled."))
+                        self.is_generating = False
+                        self.root.after(0, lambda: self.generate_button.config(state="normal"))
+                        self.root.after(0, lambda: self.cancel_button.config(state="disabled"))
+                        self.root.after(0, lambda: self.progress_var.set(0))
+                        return
                     # Check for black image (all pixels zero)
                     if hasattr(image, 'getextrema'):
                         extrema = image.getextrema()
@@ -382,15 +416,22 @@ class SDApp:
                             lbl.bind("<Button-3>", show_img_menu)
                         self.root.after(0, show_image_window)
                     threading.Thread(target=show_image_window_threaded, daemon=True).start()
-                    self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
-                    self.root.after(0, lambda: self.seed_entry.insert(0, str(used_seed)))
+                    # Auto clear seed if checked
+                    if self.auto_clear_seed_var.get():
+                        self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
+                    else:
+                        self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
+                        self.root.after(0, lambda: self.seed_entry.insert(0, str(used_seed)))
                     self.root.after(0, lambda: self.log("Image generated. Right-click the image to save."))
+                    self.root.after(0, lambda: self.progress_var.set(100))
                 except Exception as e:
                     self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to generate image: {e}"))
                     self.root.after(0, lambda: self.log(f"Image generation failed: {e}"))
+                    self.root.after(0, lambda: self.progress_var.set(0))
                 finally:
                     self.is_generating = False
                     self.root.after(0, lambda: self.generate_button.config(state="normal"))
+                    self.root.after(0, lambda: self.cancel_button.config(state="disabled"))
             threading.Thread(target=run_generation, daemon=True).start()
         self.load_model_threaded(callback=after_model_loaded)
 
