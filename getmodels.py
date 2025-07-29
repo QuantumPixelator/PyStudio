@@ -12,15 +12,17 @@ login(TOKEN)
 # Popular community-created full SD checkpoints (replace with actual IDs from HF)
 MODELS = [
     "SG161222/Realistic_Vision_V5.1_noVAE",     # Realistic Vision
-    "Lykon/ChilloutMix",                        # ChilloutMix
-    "Lykon/MajicMixRealistic",                  # MajicMix
-    "SG161222/CyberRealistic",                  # CyberRealistic
-    "stablediffusionapi/epicrealism",           # EpicRealism
     "Lykon/DreamShaper",                        # DreamShaper
     "digiplay/AbsoluteReality_v1.8.1",          # AbsoluteReality
     "RunDiffusion/Juggernaut-XL-v8",            # Juggernaut XL
-    "stablediffusionapi/mobius-xl",             # Mobius XL
-    "leosam/helloworldxl",                      # HelloWorld XL
+    "stablediffusionapi/epicrealism",           # EpicRealism
+    # Fantasy content (highly rated)
+    "darkstorm2150/Protogen_x3.4_Official_Release", # Protogen (fantasy, sci-fi, general)
+    # Cartoon/Disney/Pixar style
+    "nitrosocke/mo-di-diffusion",               # MoDi Diffusion (Disney/Pixar style)
+    # Other interesting/creative
+    "prompthero/openjourney", # OpenJourney (creative, available)
+    "stablediffusionapi/realistic-vision-v51",  # Realistic Vision (alt, for variety)
 ]
 
 DEST_ROOT = "models"

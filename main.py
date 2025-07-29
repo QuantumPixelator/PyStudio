@@ -14,7 +14,7 @@ class SDApp:
     def __init__(self, root):
         self.root = root
         self.root.title("PyStudio Diffusion")
-        self.root.geometry("700x650")
+        self.root.geometry("700x750")
         self.root.resizable(False, False)
         style = ttk.Style()
         style.theme_use("clam")
@@ -112,6 +112,16 @@ class SDApp:
         self.prompt_entry.bind("<Button-3>", lambda e: self._show_text_menu(e, self.prompt_entry))
         self.negative_entry.bind("<Button-3>", lambda e: self._show_text_menu(e, self.negative_entry))
 
+        # Auto-load negative prompt from negative.txt if it exists
+        neg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "negative.txt")
+        if os.path.isfile(neg_path):
+            try:
+                with open(neg_path, "r", encoding="utf-8") as nf:
+                    neg_text = nf.read().strip()
+                self.negative_entry.delete("1.0", "end")
+                self.negative_entry.insert("1.0", neg_text)
+            except Exception:
+                pass
         # Generate button and status
         bottom_frame = ttk.Frame(main_frame)
         bottom_frame.pack(fill="x", pady=10)
@@ -142,7 +152,7 @@ class SDApp:
         # Log box
         log_frame = ttk.LabelFrame(main_frame, text="Log", padding=10)
         log_frame.pack(fill="both", pady=10, expand=True)
-        self.log_text = tk.Text(log_frame, height=25, wrap="word", state="disabled")
+        self.log_text = tk.Text(log_frame, height=50, wrap="word", state="disabled")
         self.log_text.pack(side="left", fill="both", expand=True)
         self.log_scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_scroll.pack(side="right", fill="y")
@@ -258,9 +268,9 @@ class SDApp:
                     self.root.after(0, lambda: messagebox.showwarning("CUDA Not Available", "CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL."))
                 torch_dtype = torch.float16 if use_cuda else torch.float32
                 if "xl" in model_name.lower():
-                    pipe = StableDiffusionXLPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype)
+                    pipe = StableDiffusionXLPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, safety_checker=None)
                 else:
-                    pipe = StableDiffusionPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype)
+                    pipe = StableDiffusionPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, safety_checker=None)
                 device = "cuda" if use_cuda else "cpu"
                 pipe = pipe.to(device)
                 self.pipe = pipe
@@ -296,6 +306,9 @@ class SDApp:
         self.cancel_button.config(state="normal")
         self.is_generating = True
         self._cancel_requested = False
+        # Auto clear seed if box is checked
+        if self.auto_clear_seed_var.get():
+            self.seed_entry.delete(0, tk.END)
         self.log("Loading model...")
         self.progress_var.set(0)
         self.progress_bar.update()
@@ -322,6 +335,7 @@ class SDApp:
                     seed_str = self.seed_entry.get().strip()
                     generator = None
                     used_seed = None
+                    seed_str = self.seed_entry.get().strip()
                     if seed_str:
                         try:
                             seed = int(seed_str)
@@ -416,12 +430,9 @@ class SDApp:
                             lbl.bind("<Button-3>", show_img_menu)
                         self.root.after(0, show_image_window)
                     threading.Thread(target=show_image_window_threaded, daemon=True).start()
-                    # Auto clear seed if checked
-                    if self.auto_clear_seed_var.get():
-                        self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
-                    else:
-                        self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
-                        self.root.after(0, lambda: self.seed_entry.insert(0, str(used_seed)))
+                    # Always show the used seed after generation
+                    self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
+                    self.root.after(0, lambda: self.seed_entry.insert(0, str(used_seed)))
                     self.root.after(0, lambda: self.log("Image generated. Right-click the image to save."))
                     self.root.after(0, lambda: self.progress_var.set(100))
                 except Exception as e:
