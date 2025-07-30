@@ -329,6 +329,33 @@ class SDApp:
         prompt = self.prompt_entry.get("1.0", "end").strip()
         negative_prompt = self.negative_entry.get("1.0", "end").strip()
         model_name = self.model_var.get()
+        # --- Prompt token count and truncation warning ---
+        # Determine token limit based on model type
+        token_limit = 77
+        if model_name and "xl" in model_name.lower():
+            token_limit = 120
+        # Try to get tokenizer from loaded pipeline if available
+        tokenizer = None
+        if self.pipe and hasattr(self.pipe, "tokenizer"):
+            tokenizer = self.pipe.tokenizer
+        elif self.pipe and hasattr(self.pipe, "text_encoder") and hasattr(self.pipe.text_encoder, "tokenizer"):
+            tokenizer = self.pipe.text_encoder.tokenizer
+        # Fallback: use diffusers tokenizer if available
+        try:
+            if tokenizer:
+                tokens = tokenizer(prompt, truncation=False, return_tensors=None)["input_ids"]
+                token_count = len(tokens)
+            else:
+                # Fallback: estimate by splitting on spaces (not accurate, but better than nothing)
+                token_count = len(prompt.split())
+        except Exception:
+            token_count = len(prompt.split())
+        if token_count > token_limit:
+            self.log(f"Prompt token count: {token_count} (limit: {token_limit}) - Prompt will be truncated!")
+            messagebox.showwarning("Prompt Truncated", f"Your prompt is {token_count} tokens (limit: {token_limit}). It will be truncated.")
+        else:
+            self.log(f"Prompt token count: {token_count} (limit: {token_limit})")
+        # --- End prompt token count logic ---
         if not model_name or model_name not in self.available_models:
             self.log("Please select a model before generating an image.")
             messagebox.showwarning("Model Error", "Please select a model before generating an image.")
