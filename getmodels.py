@@ -23,6 +23,11 @@ MODELS = [
     # Other interesting/creative
     "prompthero/openjourney", # OpenJourney (creative, available)
     "stablediffusionapi/realistic-vision-v51",  # Realistic Vision (alt, for variety)
+    # Verified SDXL NSFW/uncensored models
+    "John6666/wai-nsfw-illustrious-v90-sdxl",           # SDXL NSFW/uncensored
+    "John6666/wai-nsfw-illustrious-sdxl-v140-sdxl",     # SDXL NSFW/uncensored
+    "John6666/wai-ani-nsfw-ponyxl-v7-sdxl",             # SDXL NSFW/uncensored
+    "John6666/tales-of-digital-desire-sfw-nsfw-xxx-v21-sdxl", # SDXL NSFW/uncensored
 ]
 
 DEST_ROOT = "models"

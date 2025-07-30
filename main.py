@@ -32,6 +32,26 @@ class SDApp:
         self.model_menu = ttk.OptionMenu(top_frame, self.model_var, "")
         self.model_menu.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
 
+        # LoRA selection to the right of model choice
+        ttk.Label(top_frame, text="Select LoRA:").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        self.lora_var = tk.StringVar(root)
+        self.lora_var.set("")
+        self.lora_menu = ttk.OptionMenu(top_frame, self.lora_var, "")
+        self.lora_menu.grid(row=0, column=3, sticky="ew", padx=5, pady=5)
+
+        # Populate LoRA menu from /loras folder
+        self.lora_options = [""]
+        loras_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "loras")
+        if os.path.isdir(loras_dir):
+            for entry in os.listdir(loras_dir):
+                entry_path = os.path.join(loras_dir, entry)
+                if os.path.isdir(entry_path):
+                    self.lora_options.append(entry)
+        self.lora_menu['menu'].delete(0, 'end')
+        for lora in self.lora_options:
+            self.lora_menu['menu'].add_command(label=lora if lora else "(None)", command=tk._setit(self.lora_var, lora))
+        self.lora_var.set("")  # Start with blank (no LoRA)
+
         ttk.Label(top_frame, text="Image Size:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.size_var = tk.StringVar(root)
         self.size_options = ["512x512", "768x768", "1024x1024", "1920x1080"]
@@ -56,6 +76,21 @@ class SDApp:
             self.guidance_value_label.config(text=f"{self.guidance_var.get():.2f}")
         self.guidance_var.trace_add("write", update_guidance_label)
         ttk.Label(options_frame, text="Lower = more creative, Higher = more literal (default: 7.0)", font=("Arial", 8)).grid(row=0, column=2, sticky="w", padx=5)
+
+        # CFG slider
+        ttk.Label(options_frame, text="CFG (LoRA Strength):").grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        self.cfg_var = tk.DoubleVar(root)
+        self.cfg_var.set(0.7)
+        cfg_frame = ttk.Frame(options_frame)
+        cfg_frame.grid(row=3, column=1, sticky="ew", padx=5, pady=5)
+        self.cfg_scale = ttk.Scale(cfg_frame, from_=0.0, to=1.0, orient="horizontal", variable=self.cfg_var)
+        self.cfg_scale.pack(side="left", fill="x", expand=True)
+        self.cfg_value_label = ttk.Label(cfg_frame, text=f"{self.cfg_var.get():.2f}")
+        self.cfg_value_label.pack(side="left", padx=5)
+        def update_cfg_label(*args):
+            self.cfg_value_label.config(text=f"{self.cfg_var.get():.2f}")
+        self.cfg_var.trace_add("write", update_cfg_label)
+        ttk.Label(options_frame, text="LoRA strength (0.0 = off, 1.0 = max, default: 0.7)", font=("Arial", 8)).grid(row=3, column=2, sticky="w", padx=5)
 
         ttk.Label(options_frame, text="Quality / Detail (Steps):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.steps_var = tk.IntVar(root)
@@ -349,6 +384,35 @@ class SDApp:
                         used_seed = random.randint(0, 2**32 - 1)
                         generator = torch.manual_seed(used_seed)
                     use_cuda = torch.cuda.is_available()
+                    # LoRA support: if a LoRA is selected, load and apply it
+                    lora_name = self.lora_var.get()
+                    lora_path = None
+                    if lora_name:
+                        loras_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "loras")
+                        lora_path = os.path.join(loras_dir, lora_name)
+                        if os.path.isdir(lora_path):
+                            try:
+                                safetensors_files = [f for f in os.listdir(lora_path) if f.endswith(".safetensors")]
+                                if safetensors_files:
+                                    lora_weights = os.path.join(lora_path, safetensors_files[0])
+                                    if hasattr(pipe, "load_lora_weights"):
+                                        pipe.load_lora_weights(lora_weights, weight=self.cfg_var.get())
+                                else:
+                                    ckpt_files = [f for f in os.listdir(lora_path) if f.endswith(".ckpt")]
+                                    if ckpt_files:
+                                        lora_weights = os.path.join(lora_path, ckpt_files[0])
+                                        if hasattr(pipe, "load_lora_weights"):
+                                            pipe.load_lora_weights(lora_weights, weight=self.cfg_var.get())
+                            except Exception as e:
+                                def handle_lora_error():
+                                    messagebox.showerror("LoRA Compatibility Error", f"LoRA compatibility error:\n{e}\nGeneration stopped. Please select a compatible model or LoRA.")
+                                    self.log(f"LoRA compatibility error: {e}\nGeneration stopped. Please select a compatible model or LoRA.")
+                                    self.is_generating = False
+                                    self.generate_button.config(state="normal")
+                                    self.cancel_button.config(state="disabled")
+                                    self.progress_var.set(0)
+                                self.root.after(0, handle_lora_error)
+                                return
                     with torch.autocast("cuda" if use_cuda else "cpu"):
                         pipe_args = dict(
                             prompt=prompt,
@@ -360,17 +424,14 @@ class SDApp:
                             generator=generator,
                             callback_on_step_end=progress_callback
                         )
-                        # Some older diffusers may not support callback_on_step_end
                         try:
                             result = pipe(**pipe_args)
                         except TypeError:
-                            # Remove callback_on_step_end if not supported
                             pipe_args.pop('callback_on_step_end', None)
                             try:
                                 result = pipe(**pipe_args)
                             except Exception:
                                 self.root.after(0, lambda: self.log("Progress bar not supported in this diffusers/model version."))
-                                # Fallback: no progress bar
                                 pipe_args = dict(
                                     prompt=prompt,
                                     negative_prompt=negative_prompt if negative_prompt else None,
@@ -382,7 +443,6 @@ class SDApp:
                                 )
                                 result = pipe(**pipe_args)
                         image = result.images[0]
-                    # Check for cancel
                     if self._cancel_requested:
                         self.root.after(0, lambda: self.log("Generation cancelled before completion."))
                         self.root.after(0, lambda: self.status_label.config(text="Generation cancelled."))
@@ -391,7 +451,6 @@ class SDApp:
                         self.root.after(0, lambda: self.cancel_button.config(state="disabled"))
                         self.root.after(0, lambda: self.progress_var.set(0))
                         return
-                    # Check for black image (all pixels zero)
                     if hasattr(image, 'getextrema'):
                         extrema = image.getextrema()
                         if isinstance(extrema, tuple) and all(e == (0, 0) for e in extrema):
@@ -428,7 +487,6 @@ class SDApp:
                             lbl.bind("<Button-3>", show_img_menu)
                         self.root.after(0, show_image_window)
                     threading.Thread(target=show_image_window_threaded, daemon=True).start()
-                    # Always show the used seed after generation
                     self.root.after(0, lambda: self.seed_entry.delete(0, tk.END))
                     self.root.after(0, lambda: self.seed_entry.insert(0, str(used_seed)))
                     self.root.after(0, lambda: self.log("Image generated. Right-click the image to save."))
