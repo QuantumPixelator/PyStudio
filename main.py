@@ -6,7 +6,7 @@ import os
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 import threading
 
-# NOTE: Do not commit model files to git. Add 'models/' to your .gitignore.
+# NOTE: Do not commit model/LoRA files to git. Add 'models/' and 'loras/' to your .gitignore.
 
 MODELS_DIR = "./models"
 
@@ -32,12 +32,20 @@ class SDApp:
         self.model_menu = ttk.OptionMenu(top_frame, self.model_var, "")
         self.model_menu.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
 
-        # LoRA selection to the right of model choice
-        ttk.Label(top_frame, text="Select LoRA:").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        # Image Size selection to the right of model choice (was LoRA)
+        ttk.Label(top_frame, text="Image Size:").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+        self.size_var = tk.StringVar(root)
+        self.size_options = ["512x512", "768x768", "1024x1024", "1920x1080"]
+        self.size_var.set(self.size_options[0])
+        self.size_menu = ttk.OptionMenu(top_frame, self.size_var, self.size_options[0], *self.size_options)
+        self.size_menu.grid(row=0, column=3, sticky="ew", padx=5, pady=5)
+
+        # LoRA selection (was Image Size row)
+        ttk.Label(top_frame, text="Select LoRA:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.lora_var = tk.StringVar(root)
         self.lora_var.set("")
         self.lora_menu = ttk.OptionMenu(top_frame, self.lora_var, "")
-        self.lora_menu.grid(row=0, column=3, sticky="ew", padx=5, pady=5)
+        self.lora_menu.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
 
         # Populate LoRA menu from /loras folder
         self.lora_options = [""]
@@ -51,13 +59,6 @@ class SDApp:
         for lora in self.lora_options:
             self.lora_menu['menu'].add_command(label=lora if lora else "(None)", command=tk._setit(self.lora_var, lora))
         self.lora_var.set("")  # Start with blank (no LoRA)
-
-        ttk.Label(top_frame, text="Image Size:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        self.size_var = tk.StringVar(root)
-        self.size_options = ["512x512", "768x768", "1024x1024", "1920x1080"]
-        self.size_var.set(self.size_options[0])
-        self.size_menu = ttk.OptionMenu(top_frame, self.size_var, self.size_options[0], *self.size_options)
-        self.size_menu.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
 
         # Options section
         options_frame = ttk.LabelFrame(main_frame, text="Generation Options", padding=10)
@@ -77,21 +78,7 @@ class SDApp:
         self.guidance_var.trace_add("write", update_guidance_label)
         ttk.Label(options_frame, text="Lower = more creative, Higher = more literal (default: 7.0)", font=("Arial", 8)).grid(row=0, column=2, sticky="w", padx=5)
 
-        # CFG slider
-        ttk.Label(options_frame, text="CFG (LoRA Strength):").grid(row=3, column=0, sticky="w", padx=5, pady=5)
-        self.cfg_var = tk.DoubleVar(root)
-        self.cfg_var.set(0.7)
-        cfg_frame = ttk.Frame(options_frame)
-        cfg_frame.grid(row=3, column=1, sticky="ew", padx=5, pady=5)
-        self.cfg_scale = ttk.Scale(cfg_frame, from_=0.0, to=1.0, orient="horizontal", variable=self.cfg_var)
-        self.cfg_scale.pack(side="left", fill="x", expand=True)
-        self.cfg_value_label = ttk.Label(cfg_frame, text=f"{self.cfg_var.get():.2f}")
-        self.cfg_value_label.pack(side="left", padx=5)
-        def update_cfg_label(*args):
-            self.cfg_value_label.config(text=f"{self.cfg_var.get():.2f}")
-        self.cfg_var.trace_add("write", update_cfg_label)
-        ttk.Label(options_frame, text="LoRA strength (0.0 = off, 1.0 = max, default: 0.7)", font=("Arial", 8)).grid(row=3, column=2, sticky="w", padx=5)
-
+        # Quality / Detail (Steps):
         ttk.Label(options_frame, text="Quality / Detail (Steps):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.steps_var = tk.IntVar(root)
         self.steps_var.set(30)
@@ -106,18 +93,30 @@ class SDApp:
         self.steps_var.trace_add("write", update_steps_label)
         ttk.Label(options_frame, text="Higher = more detail, slower (default: 30)", font=("Arial", 8)).grid(row=1, column=2, sticky="w", padx=5)
 
-        ttk.Label(options_frame, text="Random Seed:").grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        # CFG slider row (was Random Seed row)
+        ttk.Label(options_frame, text="CFG (LoRA Strength):").grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        self.cfg_var = tk.DoubleVar(root)
+        self.cfg_var.set(0.7)
+        cfg_frame = ttk.Frame(options_frame)
+        cfg_frame.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
+        self.cfg_scale = ttk.Scale(cfg_frame, from_=0.0, to=1.0, orient="horizontal", variable=self.cfg_var)
+        self.cfg_scale.pack(side="left", fill="x", expand=True)
+        self.cfg_value_label = ttk.Label(cfg_frame, text=f"{self.cfg_var.get():.2f}")
+        self.cfg_value_label.pack(side="left", padx=5)
+        def update_cfg_label(*args):
+            self.cfg_value_label.config(text=f"{self.cfg_var.get():.2f}")
+        self.cfg_var.trace_add("write", update_cfg_label)
+        ttk.Label(options_frame, text="LoRA strength (0.0 = off, 1.0 = max, default: 0.7)", font=("Arial", 8)).grid(row=2, column=2, sticky="w", padx=5)
+
+        # Random Seed row (was CFG row)
+        ttk.Label(options_frame, text="Random Seed:").grid(row=3, column=0, sticky="w", padx=5, pady=5)
         seed_frame = ttk.Frame(options_frame)
-        seed_frame.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
+        seed_frame.grid(row=3, column=1, sticky="ew", padx=5, pady=5)
         self.seed_entry = ttk.Entry(seed_frame)
         self.seed_entry.pack(side="left", fill="x", expand=True)
         clear_seed_btn = ttk.Button(seed_frame, text="✕", width=2, command=lambda: self.seed_entry.delete(0, tk.END))
         clear_seed_btn.pack(side="left", padx=2)
-        ttk.Label(options_frame, text="Set for reproducible results, blank for random", font=("Arial", 8)).grid(row=2, column=2, sticky="w", padx=5)
-
-        options_frame.columnconfigure(1, weight=1)
-
-        # Prompts frame
+        ttk.Label(options_frame, text="Set for reproducible results, blank for random", font=("Arial", 8)).grid(row=3, column=2, sticky="w", padx=5)
         prompts_frame = ttk.Frame(main_frame)
         prompts_frame.pack(fill="both", pady=10)
 
