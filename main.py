@@ -350,39 +350,37 @@ class SDApp:
                         generator = torch.manual_seed(used_seed)
                     use_cuda = torch.cuda.is_available()
                     with torch.autocast("cuda" if use_cuda else "cpu"):
+                        pipe_args = dict(
+                            prompt=prompt,
+                            negative_prompt=negative_prompt if negative_prompt else None,
+                            num_inference_steps=num_inference_steps,
+                            guidance_scale=guidance_scale,
+                            height=height,
+                            width=width,
+                            generator=generator,
+                            callback_on_step_end=progress_callback
+                        )
+                        # Some older diffusers may not support callback_on_step_end
                         try:
-                            pipe_args = dict(
-                                prompt=prompt,
-                                negative_prompt=negative_prompt if negative_prompt else None,
-                                num_inference_steps=num_inference_steps,
-                                guidance_scale=guidance_scale,
-                                height=height,
-                                width=width,
-                                generator=generator,
-                                callback=progress_callback,
-                                callback_steps=1
-                            )
-                            # Some older diffusers may not support callback/callback_steps
+                            result = pipe(**pipe_args)
+                        except TypeError:
+                            # Remove callback_on_step_end if not supported
+                            pipe_args.pop('callback_on_step_end', None)
                             try:
                                 result = pipe(**pipe_args)
-                            except TypeError:
-                                # Remove callback/callback_steps if not supported
-                                pipe_args.pop('callback', None)
-                                pipe_args.pop('callback_steps', None)
+                            except Exception:
+                                self.root.after(0, lambda: self.log("Progress bar not supported in this diffusers/model version."))
+                                # Fallback: no progress bar
+                                pipe_args = dict(
+                                    prompt=prompt,
+                                    negative_prompt=negative_prompt if negative_prompt else None,
+                                    num_inference_steps=num_inference_steps,
+                                    guidance_scale=guidance_scale,
+                                    height=height,
+                                    width=width,
+                                    generator=generator
+                                )
                                 result = pipe(**pipe_args)
-                        except Exception as te:
-                            self.root.after(0, lambda: self.log("Progress bar not supported in this diffusers/model version."))
-                            # Fallback: no progress bar
-                            pipe_args = dict(
-                                prompt=prompt,
-                                negative_prompt=negative_prompt if negative_prompt else None,
-                                num_inference_steps=num_inference_steps,
-                                guidance_scale=guidance_scale,
-                                height=height,
-                                width=width,
-                                generator=generator
-                            )
-                            result = pipe(**pipe_args)
                         image = result.images[0]
                     # Check for cancel
                     if self._cancel_requested:
