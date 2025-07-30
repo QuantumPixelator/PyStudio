@@ -432,8 +432,8 @@ class SDApp:
                                             pipe.load_lora_weights(lora_weights, weight=self.cfg_var.get())
                             except Exception as e:
                                 def handle_lora_error():
-                                    messagebox.showerror("LoRA Compatibility Error", f"LoRA compatibility error:\n{e}\nGeneration stopped. Please select a compatible model or LoRA.")
-                                    self.log(f"LoRA compatibility error: {e}\nGeneration stopped. Please select a compatible model or LoRA.")
+                                    messagebox.showerror("LoRA Compatibility Error", f"LoRA compatibility error! Generation stopped. Please select a compatible model or LoRA.")
+                                    self.log(f"LoRA compatibility error! Generation stopped. Please select a compatible model or LoRA.")
                                     self.is_generating = False
                                     self.generate_button.config(state="normal")
                                     self.cancel_button.config(state="disabled")
