@@ -268,15 +268,13 @@ class SDApp:
         for entry in os.listdir(MODELS_DIR):
             entry_path = os.path.join(MODELS_DIR, entry)
             if os.path.isdir(entry_path):
-                required = [
-                    "model_index.json",
-                    "unet",
-                    "vae",
-                    "text_encoder",
-                    "tokenizer"
-                ]
-                missing = [item for item in required if not os.path.exists(os.path.join(entry_path, item))]
-                if not missing:
+                # Flexible: show if at least one model file exists
+                has_model_file = False
+                for fname in os.listdir(entry_path):
+                    if fname.endswith(".ckpt") or fname.endswith(".safetensors") or fname == "model_index.json":
+                        has_model_file = True
+                        break
+                if has_model_file:
                     models[entry] = entry_path
         return models
 
@@ -301,10 +299,34 @@ class SDApp:
                     self.root.after(0, lambda: self.log("CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL."))
                     self.root.after(0, lambda: messagebox.showwarning("CUDA Not Available", "CUDA GPU not detected. Image generation will be much slower and may produce poor results, especially for SDXL."))
                 torch_dtype = torch.float16 if use_cuda else torch.float32
-                if "xl" in model_name.lower():
-                    pipe = StableDiffusionXLPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, safety_checker=None)
+                # Check for full pipeline (model_index.json) or single file (.ckpt/.safetensors)
+                files = os.listdir(model_dir)
+                has_index = "model_index.json" in files
+                ckpt_files = [f for f in files if f.endswith(".ckpt") or f.endswith(".safetensors")]
+                if has_index:
+                    if "xl" in model_name.lower():
+                        pipe = StableDiffusionXLPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, safety_checker=None)
+                    else:
+                        pipe = StableDiffusionPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, safety_checker=None)
+                elif ckpt_files:
+                    # Fallback: try loading from single file
+                    ckpt_path = os.path.join(model_dir, ckpt_files[0])
+                    try:
+                        if "xl" in model_name.lower() and hasattr(StableDiffusionXLPipeline, "from_single_file"):
+                            pipe = StableDiffusionXLPipeline.from_single_file(ckpt_path, torch_dtype=torch_dtype, safety_checker=None)
+                        elif hasattr(StableDiffusionPipeline, "from_single_file"):
+                            pipe = StableDiffusionPipeline.from_single_file(ckpt_path, torch_dtype=torch_dtype, safety_checker=None)
+                        else:
+                            raise RuntimeError("Your diffusers version does not support from_single_file. Please update diffusers.")
+                    except Exception as e:
+                        self.root.after(0, lambda: self.log(f"Failed to load single-file model: {e}"))
+                        self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to load single-file model: {e}"))
+                        self.root.after(0, lambda: self.status_label.config(text="Model loading failed"))
+                        if callback:
+                            self.root.after(0, lambda: callback(None))
+                        return
                 else:
-                    pipe = StableDiffusionPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, safety_checker=None)
+                    raise RuntimeError("No supported model files found in folder.")
                 device = "cuda" if use_cuda else "cpu"
                 pipe = pipe.to(device)
                 self.pipe = pipe

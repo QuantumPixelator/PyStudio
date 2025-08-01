@@ -11,14 +11,7 @@ login(TOKEN)
 
 # 10 popular SD-compatible LoRA models (curated for realism, creativity, and compatibility)
 LORAS = [
-    "latent-consistency/lcm-lora-sdv1-5",         # LCM LoRA SD v1.5
-    "JujoHotaru/lora",                            # JujoHotaru LoRA
-    "Linaqruf/style-enhancer-xl-lora",             # Style Enhancer XL LoRA
-    "Linaqruf/epicrealism-lora",                   # EpicRealism LoRA
-    # Verified NSFW/uncensored LoRAs
-    "Keltezaa/NSFW_POV_Blowjob_lora_v2",          # NSFW LoRA
-    "Pattybmwx5/NSFWPLUS2-LoRA",                  # NSFW LoRA
-    "NSFWAIgirl/nursing-handjob-ponyxl-lora-nochekaiser" # NSFW LoRA
+    
 ]
 
 DEST_ROOT = "loras"

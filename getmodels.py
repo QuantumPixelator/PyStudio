@@ -9,25 +9,11 @@ with open('token.txt') as f:
     TOKEN = f.read().strip()
 login(TOKEN)
 
-# Popular community-created full SD checkpoints (replace with actual IDs from HF)
+# Popular community-created full SDXL NSFW checkpoints (verified, downloadable)
 MODELS = [
-    "SG161222/Realistic_Vision_V5.1_noVAE",     # Realistic Vision
-    "Lykon/DreamShaper",                        # DreamShaper
-    "digiplay/AbsoluteReality_v1.8.1",          # AbsoluteReality
-    "RunDiffusion/Juggernaut-XL-v8",            # Juggernaut XL
-    "stablediffusionapi/epicrealism",           # EpicRealism
-    # Fantasy content (highly rated)
-    "darkstorm2150/Protogen_x3.4_Official_Release", # Protogen (fantasy, sci-fi, general)
-    # Cartoon/Disney/Pixar style
-    "nitrosocke/mo-di-diffusion",               # MoDi Diffusion (Disney/Pixar style)
-    # Other interesting/creative
-    "prompthero/openjourney", # OpenJourney (creative, available)
-    "stablediffusionapi/realistic-vision-v51",  # Realistic Vision (alt, for variety)
-    # Verified SDXL NSFW/uncensored models
-    "John6666/wai-nsfw-illustrious-v90-sdxl",           # SDXL NSFW/uncensored
-    "John6666/wai-nsfw-illustrious-sdxl-v140-sdxl",     # SDXL NSFW/uncensored
-    "John6666/wai-ani-nsfw-ponyxl-v7-sdxl",             # SDXL NSFW/uncensored
-    "John6666/tales-of-digital-desire-sfw-nsfw-xxx-v21-sdxl", # SDXL NSFW/uncensored
+    "DucHaiten/DucHaiten-Real3D-NSFW-XL",                # SDXL NSFW model
+    "UnplannedAI/NSFW-XL",                              # SDXL NSFW model
+    "John6666/prefectious-xl-nsfw-v10-sdxl",            # SDXL NSFW model
 ]
 
 DEST_ROOT = "models"
