@@ -6,7 +6,7 @@ import os
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 import threading
 
-# NOTE: Do not commit model/LoRA files to git. Add 'models/' and 'loras/' to your .gitignore.
+# NOTE: Do not commit model/LoRA files to git. Add 'models/' and 'loras/' to .gitignore.
 
 MODELS_DIR = "./models"
 
@@ -191,9 +191,6 @@ class SDApp:
         self.log_scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_scroll.pack(side="right", fill="y")
         self.log_text.config(yscrollcommand=self.log_scroll.set)
-
-
-
         self.pipe = None
         self.current_model = None
         self.is_generating = False
